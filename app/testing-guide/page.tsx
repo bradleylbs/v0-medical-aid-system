@@ -1,12 +1,12 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { AppShell } from "@/components/layout/app-shell"
-import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { Button } from "@/components/ui/button"
-import { ChevronDown, ChevronRight, CheckCircle2, Circle, User, FileText, CreditCard, BarChart3, Settings, Calendar, Shield, AlertTriangle, ClipboardList } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { ChevronDown, ChevronRight, CheckCircle2, Circle, User, FileText, CreditCard, BarChart3, Settings, Shield, AlertTriangle, ClipboardList, Search, X } from "lucide-react"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -840,8 +840,9 @@ function TestCaseBlock({ tc, sectionId }: { tc: TestCase; sectionId: string }) {
   )
 }
 
-function SectionBlock({ section }: { section: Section }) {
+function SectionBlock({ section, filteredCases }: { section: Section; filteredCases?: TestCase[] }) {
   const [open, setOpen] = useState(false)
+  const visibleCases = filteredCases ?? section.testCases
 
   const variantMap: Record<string, string> = {
     default: "bg-primary text-primary-foreground",
@@ -866,12 +867,17 @@ function SectionBlock({ section }: { section: Section }) {
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${variantMap[section.badgeVariant]}`}>
                     {section.badge}
                   </span>
+                  {filteredCases && filteredCases.length !== section.testCases.length && (
+                    <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                      {filteredCases.length} of {section.testCases.length} match
+                    </span>
+                  )}
                 </div>
                 <p className="text-sm text-muted-foreground mt-1">{section.description}</p>
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0 mt-1">
-              <span className="text-xs text-muted-foreground">{section.testCases.length} test{section.testCases.length > 1 ? "s" : ""}</span>
+              <span className="text-xs text-muted-foreground">{visibleCases.length} test{visibleCases.length !== 1 ? "s" : ""}</span>
               {open ? <ChevronDown className="h-5 w-5 text-muted-foreground" /> : <ChevronRight className="h-5 w-5 text-muted-foreground" />}
             </div>
           </div>
@@ -900,9 +906,13 @@ function SectionBlock({ section }: { section: Section }) {
           {/* Test Cases */}
           <div className="space-y-3">
             <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Test Cases</h4>
-            {section.testCases.map((tc) => (
-              <TestCaseBlock key={tc.id} tc={tc} sectionId={section.id} />
-            ))}
+            {visibleCases.length === 0 ? (
+              <p className="text-sm text-muted-foreground italic px-1">No test cases match the current search.</p>
+            ) : (
+              visibleCases.map((tc) => (
+                <TestCaseBlock key={tc.id} tc={tc} sectionId={section.id} />
+              ))
+            )}
           </div>
         </CardContent>
       )}
@@ -911,14 +921,79 @@ function SectionBlock({ section }: { section: Section }) {
 }
 
 // ---------------------------------------------------------------------------
+// Role filter options derived from the section data
+// ---------------------------------------------------------------------------
+const ROLE_FILTERS = [
+  { label: "All Roles", value: "" },
+  { label: "Practice Owner", value: "practice-owner" },
+  { label: "Admin Staff", value: "admin-staff" },
+  { label: "Doctor", value: "doctor" },
+  { label: "Bureau Operator", value: "bureau-operator" },
+  { label: "End-to-End", value: "e2e-billing" },
+  { label: "Patient Mgmt", value: "patient-mgmt" },
+  { label: "Reports", value: "reports" },
+  { label: "Settings", value: "settings" },
+  { label: "Business Rules", value: "business-rules" },
+  { label: "NAPPI Codes", value: "nappi-codes" },
+]
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 export default function TestingGuidePage() {
+  const [search, setSearch] = useState("")
+  const [activeRole, setActiveRole] = useState("")
+
   const totalTests = TEST_SECTIONS.reduce((sum, s) => sum + s.testCases.length, 0)
   const totalSteps = TEST_SECTIONS.reduce(
     (sum, s) => sum + s.testCases.reduce((ss, tc) => ss + tc.steps.length, 0),
     0
   )
+
+  // Derive filtered sections + their filtered test cases
+  const filteredSections = useMemo(() => {
+    const q = search.trim().toLowerCase()
+
+    return TEST_SECTIONS
+      .filter((s) => {
+        // Role filter: keep if "All" or matching section id
+        if (activeRole && s.id !== activeRole) return false
+        return true
+      })
+      .map((s) => {
+        // If no search query, show all cases
+        if (!q) return { section: s, cases: s.testCases }
+
+        // Filter cases where title, step actions, step expected, or passCondition match
+        const cases = s.testCases.filter((tc) => {
+          if (tc.title.toLowerCase().includes(q)) return true
+          if (tc.passCondition.toLowerCase().includes(q)) return true
+          if (tc.id.toLowerCase().includes(q)) return true
+          return tc.steps.some(
+            (step) =>
+              step.action.toLowerCase().includes(q) ||
+              step.expected.toLowerCase().includes(q) ||
+              (step.note?.toLowerCase().includes(q) ?? false)
+          )
+        })
+
+        // Also check if the section role / description itself matches
+        const sectionMatches =
+          s.role.toLowerCase().includes(q) ||
+          s.description.toLowerCase().includes(q) ||
+          s.badge.toLowerCase().includes(q) ||
+          s.credentials.some(
+            (c) => c.label.toLowerCase().includes(q) || c.value.toLowerCase().includes(q)
+          )
+
+        return { section: s, cases: sectionMatches ? s.testCases : cases }
+      })
+      // Drop sections with zero matching cases (unless the section itself matched)
+      .filter(({ cases }) => cases.length > 0)
+  }, [search, activeRole])
+
+  const matchedTests = filteredSections.reduce((sum, { cases }) => sum + cases.length, 0)
+  const isFiltered = search.trim() !== "" || activeRole !== ""
 
   return (
     <AppShell
@@ -998,12 +1073,92 @@ export default function TestingGuidePage() {
         </Card>
 
         {/* ----------------------------------------------------------------- */}
+        {/* Search & Role Filter */}
+        {/* ----------------------------------------------------------------- */}
+        <div className="space-y-3">
+          {/* Search input */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search test cases, steps, credentials, actions…"
+              className="pl-9 pr-9 h-10"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Clear search"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+
+          {/* Role filter chips */}
+          <div className="flex flex-wrap gap-2">
+            {ROLE_FILTERS.map((f) => (
+              <button
+                key={f.value}
+                onClick={() => setActiveRole(f.value === activeRole ? "" : f.value)}
+                className={`text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${
+                  activeRole === f.value
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-background text-muted-foreground border-border hover:border-primary hover:text-foreground"
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Results count */}
+          {isFiltered && (
+            <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
+              <span>
+                Showing <span className="font-semibold text-foreground">{matchedTests}</span> of{" "}
+                <span className="font-semibold text-foreground">{totalTests}</span> test cases
+                {filteredSections.length !== TEST_SECTIONS.length && (
+                  <> across <span className="font-semibold text-foreground">{filteredSections.length}</span> of{" "}
+                  <span className="font-semibold text-foreground">{TEST_SECTIONS.length}</span> sections</>
+                )}
+              </span>
+              <button
+                onClick={() => { setSearch(""); setActiveRole("") }}
+                className="text-primary hover:underline"
+              >
+                Clear all filters
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* ----------------------------------------------------------------- */}
         {/* Test Sections */}
         {/* ----------------------------------------------------------------- */}
         <div className="space-y-4">
-          {TEST_SECTIONS.map((section) => (
-            <SectionBlock key={section.id} section={section} />
-          ))}
+          {filteredSections.length === 0 ? (
+            <div className="rounded-xl border border-border bg-muted/30 p-12 text-center">
+              <Search className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
+              <p className="font-medium text-foreground">No results found</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Try a different search term or clear the role filter.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-4"
+                onClick={() => { setSearch(""); setActiveRole("") }}
+              >
+                Clear Filters
+              </Button>
+            </div>
+          ) : (
+            filteredSections.map(({ section, cases }) => (
+              <SectionBlock key={section.id} section={section} filteredCases={cases} />
+            ))
+          )}
         </div>
 
         {/* ----------------------------------------------------------------- */}
