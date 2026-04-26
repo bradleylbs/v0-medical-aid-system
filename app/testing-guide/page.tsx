@@ -1,12 +1,13 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useRef, useEffect } from "react"
 import { AppShell } from "@/components/layout/app-shell"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { ChevronDown, ChevronRight, CheckCircle2, Circle, User, FileText, CreditCard, BarChart3, Settings, Shield, AlertTriangle, ClipboardList, Search, X } from "lucide-react"
+import { ChevronDown, ChevronRight, CheckCircle2, Circle, User, FileText, CreditCard, BarChart3, Settings, Shield, AlertTriangle, ClipboardList, Search, X, Stethoscope } from "lucide-react"
+import { ICD10_CODES } from "@/lib/mock-data"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -943,6 +944,29 @@ const ROLE_FILTERS = [
 export default function TestingGuidePage() {
   const [search, setSearch] = useState("")
   const [activeRole, setActiveRole] = useState("")
+  const [activeIcd10, setActiveIcd10] = useState<{ code: string; description: string } | null>(null)
+  const [icd10Query, setIcd10Query] = useState("")
+  const [showIcd10Drop, setShowIcd10Drop] = useState(false)
+  const icd10Ref = useRef<HTMLDivElement>(null)
+
+  // Close ICD-10 dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (icd10Ref.current && !icd10Ref.current.contains(e.target as Node)) {
+        setShowIcd10Drop(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [])
+
+  const icd10Suggestions = useMemo(() => {
+    const q = icd10Query.trim().toLowerCase()
+    if (!q) return ICD10_CODES.slice(0, 8)
+    return ICD10_CODES.filter(
+      (c) => c.code.toLowerCase().includes(q) || c.description.toLowerCase().includes(q)
+    ).slice(0, 8)
+  }, [icd10Query])
 
   const totalTests = TEST_SECTIONS.reduce((sum, s) => sum + s.testCases.length, 0)
   const totalSteps = TEST_SECTIONS.reduce(
@@ -953,47 +977,74 @@ export default function TestingGuidePage() {
   // Derive filtered sections + their filtered test cases
   const filteredSections = useMemo(() => {
     const q = search.trim().toLowerCase()
+    const icdFilter = activeIcd10
+      ? `${activeIcd10.code} ${activeIcd10.description}`.toLowerCase()
+      : null
+    // individual icd code token for exact matching in steps
+    const icdCode = activeIcd10?.code.toLowerCase() ?? null
+    const icdDesc = activeIcd10?.description.toLowerCase() ?? null
 
     return TEST_SECTIONS
       .filter((s) => {
-        // Role filter: keep if "All" or matching section id
         if (activeRole && s.id !== activeRole) return false
         return true
       })
       .map((s) => {
-        // If no search query, show all cases
-        if (!q) return { section: s, cases: s.testCases }
+        // Apply keyword search first
+        let cases = s.testCases
 
-        // Filter cases where title, step actions, step expected, or passCondition match
-        const cases = s.testCases.filter((tc) => {
-          if (tc.title.toLowerCase().includes(q)) return true
-          if (tc.passCondition.toLowerCase().includes(q)) return true
-          if (tc.id.toLowerCase().includes(q)) return true
-          return tc.steps.some(
-            (step) =>
-              step.action.toLowerCase().includes(q) ||
-              step.expected.toLowerCase().includes(q) ||
-              (step.note?.toLowerCase().includes(q) ?? false)
-          )
-        })
+        if (q) {
+          const sectionMatches =
+            s.role.toLowerCase().includes(q) ||
+            s.description.toLowerCase().includes(q) ||
+            s.badge.toLowerCase().includes(q) ||
+            s.credentials.some(
+              (c) => c.label.toLowerCase().includes(q) || c.value.toLowerCase().includes(q)
+            )
 
-        // Also check if the section role / description itself matches
-        const sectionMatches =
-          s.role.toLowerCase().includes(q) ||
-          s.description.toLowerCase().includes(q) ||
-          s.badge.toLowerCase().includes(q) ||
-          s.credentials.some(
-            (c) => c.label.toLowerCase().includes(q) || c.value.toLowerCase().includes(q)
-          )
+          if (!sectionMatches) {
+            cases = cases.filter((tc) => {
+              if (tc.title.toLowerCase().includes(q)) return true
+              if (tc.passCondition.toLowerCase().includes(q)) return true
+              if (tc.id.toLowerCase().includes(q)) return true
+              return tc.steps.some(
+                (step) =>
+                  step.action.toLowerCase().includes(q) ||
+                  step.expected.toLowerCase().includes(q) ||
+                  (step.note?.toLowerCase().includes(q) ?? false)
+              )
+            })
+          }
+        }
 
-        return { section: s, cases: sectionMatches ? s.testCases : cases }
+        // Apply ICD-10 filter on top of keyword results
+        if (icdCode && icdDesc) {
+          cases = cases.filter((tc) => {
+            const fullText = [
+              tc.title,
+              tc.passCondition,
+              ...tc.steps.flatMap((s) => [s.action, s.expected, s.note ?? ""]),
+            ]
+              .join(" ")
+              .toLowerCase()
+            return fullText.includes(icdCode) || fullText.includes(icdDesc)
+          })
+        }
+
+        return { section: s, cases }
       })
-      // Drop sections with zero matching cases (unless the section itself matched)
       .filter(({ cases }) => cases.length > 0)
-  }, [search, activeRole])
+  }, [search, activeRole, activeIcd10])
 
   const matchedTests = filteredSections.reduce((sum, { cases }) => sum + cases.length, 0)
-  const isFiltered = search.trim() !== "" || activeRole !== ""
+  const isFiltered = search.trim() !== "" || activeRole !== "" || activeIcd10 !== null
+
+  function clearAll() {
+    setSearch("")
+    setActiveRole("")
+    setActiveIcd10(null)
+    setIcd10Query("")
+  }
 
   return (
     <AppShell
@@ -1073,30 +1124,97 @@ export default function TestingGuidePage() {
         </Card>
 
         {/* ----------------------------------------------------------------- */}
-        {/* Search & Role Filter */}
+        {/* Search & Filters */}
         {/* ----------------------------------------------------------------- */}
         <div className="space-y-3">
-          {/* Search input */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search test cases, steps, credentials, actions…"
-              className="pl-9 pr-9 h-10"
-            />
-            {search && (
-              <button
-                onClick={() => setSearch("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                aria-label="Clear search"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
+
+          {/* Row 1: keyword search + ICD-10 combobox */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            {/* Keyword search */}
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search test cases, steps, credentials, actions…"
+                className="pl-9 pr-9 h-10"
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  aria-label="Clear search"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {/* ICD-10 combobox */}
+            <div className="relative w-full sm:w-72" ref={icd10Ref}>
+              <Stethoscope className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none z-10" />
+              <Input
+                value={activeIcd10 ? `${activeIcd10.code} — ${activeIcd10.description}` : icd10Query}
+                onChange={(e) => {
+                  if (activeIcd10) {
+                    setActiveIcd10(null)
+                    setIcd10Query(e.target.value)
+                  } else {
+                    setIcd10Query(e.target.value)
+                  }
+                  setShowIcd10Drop(true)
+                }}
+                onFocus={() => setShowIcd10Drop(true)}
+                placeholder="Filter by ICD-10 code…"
+                className={`pl-9 pr-9 h-10 ${activeIcd10 ? "text-primary font-medium" : ""}`}
+                readOnly={!!activeIcd10}
+              />
+              {(activeIcd10 || icd10Query) && (
+                <button
+                  onClick={() => { setActiveIcd10(null); setIcd10Query(""); setShowIcd10Drop(false) }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  aria-label="Clear ICD-10 filter"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+
+              {/* Dropdown */}
+              {showIcd10Drop && !activeIcd10 && (
+                <div className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-border bg-popover shadow-lg overflow-hidden">
+                  {icd10Suggestions.length === 0 ? (
+                    <div className="px-4 py-3 text-sm text-muted-foreground">No codes found.</div>
+                  ) : (
+                    <ul>
+                      {icd10Suggestions.map((c) => (
+                        <li key={c.code}>
+                          <button
+                            className="w-full text-left px-4 py-2.5 flex items-start gap-3 hover:bg-muted/60 transition-colors"
+                            onMouseDown={(e) => {
+                              e.preventDefault()
+                              setActiveIcd10(c)
+                              setIcd10Query("")
+                              setShowIcd10Drop(false)
+                            }}
+                          >
+                            <span className="font-mono text-xs font-semibold text-primary bg-primary/10 px-1.5 py-0.5 rounded shrink-0 mt-0.5">
+                              {c.code}
+                            </span>
+                            <span className="text-sm text-foreground leading-snug">{c.description}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="border-t border-border px-4 py-2 text-xs text-muted-foreground bg-muted/30">
+                    {ICD10_CODES.length} codes available — type to search
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Role filter chips */}
+          {/* Row 2: Role filter chips */}
           <div className="flex flex-wrap gap-2">
             {ROLE_FILTERS.map((f) => (
               <button
@@ -1113,6 +1231,24 @@ export default function TestingGuidePage() {
             ))}
           </div>
 
+          {/* Active ICD-10 chip */}
+          {activeIcd10 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">ICD-10 filter:</span>
+              <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary border border-primary/20 font-medium">
+                <Stethoscope className="h-3 w-3" />
+                {activeIcd10.code} — {activeIcd10.description}
+                <button
+                  onClick={() => { setActiveIcd10(null); setIcd10Query("") }}
+                  className="ml-0.5 hover:opacity-70 transition-opacity"
+                  aria-label="Remove ICD-10 filter"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            </div>
+          )}
+
           {/* Results count */}
           {isFiltered && (
             <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
@@ -1125,7 +1261,7 @@ export default function TestingGuidePage() {
                 )}
               </span>
               <button
-                onClick={() => { setSearch(""); setActiveRole("") }}
+                onClick={clearAll}
                 className="text-primary hover:underline"
               >
                 Clear all filters
@@ -1149,7 +1285,7 @@ export default function TestingGuidePage() {
                 variant="outline"
                 size="sm"
                 className="mt-4"
-                onClick={() => { setSearch(""); setActiveRole("") }}
+                onClick={clearAll}
               >
                 Clear Filters
               </Button>
