@@ -16,6 +16,7 @@ import {
   LogOut,
   ChevronRight,
   Building2,
+  ClipboardList,
 } from "lucide-react"
 
 const navItems = [
@@ -57,6 +58,11 @@ const navItems = [
 ]
 
 const bottomItems = [
+  {
+    label: "Testing Guide",
+    href: "/testing-guide",
+    icon: ClipboardList,
+  },
   {
     label: "Settings",
     href: "/settings",
