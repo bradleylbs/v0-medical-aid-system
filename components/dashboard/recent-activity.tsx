@@ -1,3 +1,5 @@
+"use client"
+
 import { Card } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import { FileText, CheckCircle, XCircle, CreditCard, UserPlus, Send } from "lucide-react"
