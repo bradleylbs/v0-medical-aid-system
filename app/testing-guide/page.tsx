@@ -947,7 +947,25 @@ export default function TestingGuidePage() {
   const [activeIcd10, setActiveIcd10] = useState<{ code: string; description: string } | null>(null)
   const [icd10Query, setIcd10Query] = useState("")
   const [showIcd10Drop, setShowIcd10Drop] = useState(false)
+  const [dropRect, setDropRect] = useState<{ top: number; left: number; width: number } | null>(null)
   const icd10Ref = useRef<HTMLDivElement>(null)
+
+  // Reposition the fixed dropdown whenever it opens or the window scrolls/resizes
+  useEffect(() => {
+    function recalc() {
+      if (icd10Ref.current && showIcd10Drop) {
+        const r = icd10Ref.current.getBoundingClientRect()
+        setDropRect({ top: r.bottom + 4, left: r.left, width: r.width })
+      }
+    }
+    recalc()
+    window.addEventListener("resize", recalc)
+    window.addEventListener("scroll", recalc, true)
+    return () => {
+      window.removeEventListener("resize", recalc)
+      window.removeEventListener("scroll", recalc, true)
+    }
+  }, [showIcd10Drop])
 
   // Close ICD-10 dropdown on outside click
   useEffect(() => {
@@ -1151,45 +1169,63 @@ export default function TestingGuidePage() {
             </div>
 
             {/* ICD-10 combobox */}
-            <div className="relative w-full sm:w-72" ref={icd10Ref}>
+            <div className="relative w-full sm:w-80" ref={icd10Ref}>
               <Stethoscope className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none z-10" />
-              <Input
-                value={activeIcd10 ? `${activeIcd10.code} — ${activeIcd10.description}` : icd10Query}
-                onChange={(e) => {
-                  if (activeIcd10) {
-                    setActiveIcd10(null)
+
+              {/* Selected chip — replaces input when a code is chosen */}
+              {activeIcd10 ? (
+                <div className="flex items-center gap-2 pl-9 pr-3 h-10 rounded-md border border-primary bg-primary/5 text-sm">
+                  <span className="font-mono text-xs font-bold text-primary bg-primary/15 px-1.5 py-0.5 rounded shrink-0">
+                    {activeIcd10.code}
+                  </span>
+                  <span className="text-foreground font-medium truncate flex-1">{activeIcd10.description}</span>
+                  <button
+                    type="button"
+                    onClick={() => { setActiveIcd10(null); setIcd10Query(""); setShowIcd10Drop(true) }}
+                    className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                    aria-label="Clear ICD-10 selection"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                <Input
+                  value={icd10Query}
+                  onChange={(e) => {
                     setIcd10Query(e.target.value)
-                  } else {
-                    setIcd10Query(e.target.value)
-                  }
-                  setShowIcd10Drop(true)
-                }}
-                onFocus={() => setShowIcd10Drop(true)}
-                placeholder="Filter by ICD-10 code…"
-                className={`pl-9 pr-9 h-10 ${activeIcd10 ? "text-primary font-medium" : ""}`}
-                readOnly={!!activeIcd10}
-              />
-              {(activeIcd10 || icd10Query) && (
-                <button
-                  onClick={() => { setActiveIcd10(null); setIcd10Query(""); setShowIcd10Drop(false) }}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                  aria-label="Clear ICD-10 filter"
-                >
-                  <X className="h-4 w-4" />
-                </button>
+                    setShowIcd10Drop(true)
+                  }}
+                  onFocus={() => setShowIcd10Drop(true)}
+                  placeholder="Filter by ICD-10 code or name…"
+                  className="pl-9 pr-9 h-10"
+                  autoComplete="off"
+                />
               )}
 
-              {/* Dropdown */}
-              {showIcd10Drop && !activeIcd10 && (
-                <div className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-border bg-popover shadow-lg overflow-hidden">
+              {/* Dropdown list — fixed to viewport so overflow-y-auto scroll containers don't clip it */}
+              {showIcd10Drop && !activeIcd10 && dropRect && (
+                <div
+                  className="z-[9999] rounded-lg border border-border bg-background shadow-2xl overflow-hidden"
+                  style={{
+                    position: "fixed",
+                    top: dropRect.top,
+                    left: dropRect.left,
+                    width: dropRect.width,
+                    maxHeight: 320,
+                    overflowY: "auto",
+                  }}
+                >
                   {icd10Suggestions.length === 0 ? (
-                    <div className="px-4 py-3 text-sm text-muted-foreground">No codes found.</div>
+                    <div className="px-4 py-3 text-sm text-muted-foreground italic">
+                      No ICD-10 codes match &quot;{icd10Query}&quot;.
+                    </div>
                   ) : (
-                    <ul>
+                    <ul role="listbox" aria-label="ICD-10 codes">
                       {icd10Suggestions.map((c) => (
-                        <li key={c.code}>
+                        <li key={c.code} role="option" aria-selected={false}>
                           <button
-                            className="w-full text-left px-4 py-2.5 flex items-start gap-3 hover:bg-muted/60 transition-colors"
+                            type="button"
+                            className="w-full text-left px-4 py-2.5 flex items-start gap-3 hover:bg-muted transition-colors border-b border-border/50 last:border-0"
                             onMouseDown={(e) => {
                               e.preventDefault()
                               setActiveIcd10(c)
@@ -1197,7 +1233,7 @@ export default function TestingGuidePage() {
                               setShowIcd10Drop(false)
                             }}
                           >
-                            <span className="font-mono text-xs font-semibold text-primary bg-primary/10 px-1.5 py-0.5 rounded shrink-0 mt-0.5">
+                            <span className="font-mono text-xs font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded shrink-0 mt-0.5 whitespace-nowrap">
                               {c.code}
                             </span>
                             <span className="text-sm text-foreground leading-snug">{c.description}</span>
@@ -1206,8 +1242,11 @@ export default function TestingGuidePage() {
                       ))}
                     </ul>
                   )}
-                  <div className="border-t border-border px-4 py-2 text-xs text-muted-foreground bg-muted/30">
-                    {ICD10_CODES.length} codes available — type to search
+                  <div className="sticky bottom-0 border-t border-border px-4 py-2 text-xs text-muted-foreground bg-muted/50 flex items-center gap-1">
+                    <Stethoscope className="h-3 w-3 shrink-0" />
+                    {icd10Query
+                      ? `${icd10Suggestions.length} of ${ICD10_CODES.length} codes match`
+                      : `${ICD10_CODES.length} ICD-10 codes — start typing to search`}
                   </div>
                 </div>
               )}
